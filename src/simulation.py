@@ -86,45 +86,90 @@ class SimulationEngine:
                     for a in pop_rl: a.search_rl()
 
             elif experiment_type == 'evolution':
-                # Run three separate sub-experiments on the same landscape for fairness
-
-                # 1. Fixed Representation
+                # Fig 10: Joint search (cognitive + experiential) with representation change
+                # 创建三个相同的初始群体
                 pop_fixed = [GavettiAgent(lscape, self.n1) for _ in range(self.pop_size)]
-                for a in pop_fixed: a.search_cognitive()
-
-                # 2. Random Change
                 pop_random = deepcopy(pop_fixed)
-
-                # 3. Semi-Intelligent Change
                 pop_smart = deepcopy(pop_fixed)
 
+                # 所有群体都执行初始认知搜索（时期0）
+                for a in pop_fixed: a.search_cognitive()
+                for a in pop_random: a.search_cognitive()
+                for a in pop_smart: a.search_cognitive()
+
+                # 固定组：重置为初始认知维度（确保固定不变）
+                for a in pop_fixed:
+                    a.reset_to_initial_cognition()
+
+                # 跟踪变化次数（用于调试）
+                random_change_counts = []
+                smart_change_counts = []
+
                 for p in range(self.periods):
-                    # Record
+                    # 记录当前时期的适应度
                     results['Fixed'][p] += np.mean([a.fitness for a in pop_fixed])
                     results['Random_Change'][p] += np.mean([a.fitness for a in pop_random])
                     results['Semi_Intelligent'][p] += np.mean([a.fitness for a in pop_smart])
 
-                    # [cite_start]Step 1: Experiential Search (All agents do this) [cite: 421]
-                    # Note: Fig 9 is pure cognitive, Fig 10 is joint.
-                    # Assuming we want Fig 10 logic (Joint) as it's more complete.
-                    for a in pop_fixed: a.search_experiential()
-                    for a in pop_random: a.search_experiential()
-                    for a in pop_smart: a.search_experiential()
-
-                    # Step 2: Shift Representations
-                    # Fixed: Do nothing
-
-                    # Random:
+                    # PAPER ACCURATE: 经验搜索（约束在非认知维度）
+                    # 对于Fig 10，经验搜索只针对非认知维度（N-N1个维度）
+                    for a in pop_fixed:
+                        a.search_experiential(constrained_bits=self.n1)
                     for a in pop_random:
-                        a.shift_representation(mode='random')
-
-                    # Semi-Intelligent: Needs population stats
-                    # We iterate a copy or index to avoid changing pop while reading stats?
-                    # shift_representation reads the pop stats.
-                    # To be rigorous, we pass the current state of pop_smart.
-                    current_smart_pop = list(pop_smart)  # shallow copy of list
+                        a.search_experiential(constrained_bits=self.n1)
                     for a in pop_smart:
-                        a.shift_representation(mode='semi_intelligent', population=current_smart_pop)
+                        a.search_experiential(constrained_bits=self.n1)
+
+                    # PAPER ACCURATE: 表征变化逻辑
+                    # 固定组：什么都不做（保持固定表征）
+
+                    # 随机变化组：每个周期有5%概率改变
+                    random_changes_this_period = 0
+                    for a in pop_random:
+                        changed = a.shift_representation(
+                            mode='random',
+                            population=pop_random,  # 需要population参数，虽然随机变化不需要
+                            full_n=self.n,
+                            n1=self.n1,
+                            period=p
+                        )
+                        if changed:
+                            random_changes_this_period += 1
+                    random_change_counts.append(random_changes_this_period)
+
+                    smart_changes_this_period = 0
+
+                    if pop_smart:
+                        max_fitness = max(a.fitness for a in pop_smart)
+                        threshold = 0.75 * max_fitness  # 论文中的阈值：最大适应度的75%
+
+                        for a in pop_smart:
+                            if a.fitness < threshold:
+                                changed = a.shift_representation(
+                                    mode='semi_intelligent',
+                                    population=pop_smart,
+                                    full_n=self.n,
+                                    n1=self.n1,
+                                    period=p
+                                )
+                                if changed:
+                                    smart_changes_this_period += 1
+
+                    smart_change_counts.append(smart_changes_this_period)
+
+                    # 可选：每10期打印一次调试信息
+                    if p % 10 == 0 and t == 0:  # 只在第一次试验时打印
+                        avg_fixed = np.mean([a.fitness for a in pop_fixed])
+                        avg_random = np.mean([a.fitness for a in pop_random])
+                        avg_smart = np.mean([a.fitness for a in pop_smart])
+                        print(f"Period {p}: Fixed={avg_fixed:.3f}, Random={avg_random:.3f}, Smart={avg_smart:.3f}")
+                        print(
+                            f"  Changes: Random={random_changes_this_period}/{self.pop_size}, Smart={smart_changes_this_period}/{self.pop_size}")
+
+                # 可选：记录变化统计
+                if t == 0:  # 只在第一次试验时记录
+                    print(f"Trial {t}: Total random changes = {sum(random_change_counts)}")
+                    print(f"Trial {t}: Total smart changes = {sum(smart_change_counts)}")
 
         # Average over trials
         for k in results:
