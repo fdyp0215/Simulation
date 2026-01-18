@@ -123,55 +123,86 @@ class GavettiAgent(BaseAgent):
         self.state = new_state
         self.fitness = self.landscape.get_fitness(self.state)
 
-    def shift_representation(self, mode, population=None):
+    def reset_to_initial_cognition(self):
+        """Reset cognitive dimensions to initial state (first n1 dimensions)"""
+        self.cog_indices = list(range(self.n1))
+        return self.cog_indices
+
+    def shift_representation(self, mode, population=None, full_n=10, n1=3, period=None):
         """
-        [cite_start]Logic for changing the cognitive map (Fig 9-10). [cite: 390-402]
+        Improved implementation based on paper specifications for Fig 9-10
+
+        Args:
+            mode: 'fixed', 'random', or 'semi_intelligent'
+            population: List of all agents (for semi-intelligent mode)
+            full_n: Total number of dimensions (N)
+            n1: Number of cognitive dimensions (N1)
+            period: Current period (for change frequency)
         """
         if mode == 'fixed':
-            return
-
-        perform_shift = False
+            return False  # No change for fixed representation
 
         if mode == 'random':
-            # "The probability of a shift... specified as a fixed probability"
-            # Paper doesn't strictly specify P, we assume a small probability like 0.1 per period
-            # or force it every period for the "Random Change" curve if implied by context.
-            # Usually simulation agents have a probability P_change. Let's use 0.2.
-            if random.random() < 0.2:
-                perform_shift = True
-                # [cite_start]"One of the N1 dimensions is simply replaced at random" [cite: 393]
-                # Pick one to drop
-                drop_idx = random.choice(self.cog_indices)
-                self.cog_indices.remove(drop_idx)
-                # Pick one to add
-                available = [i for i in range(self.n) if i not in self.cog_indices]
-                add_idx = random.choice(available)
-                self.cog_indices.append(add_idx)
-                # Sort for consistency (optional but good for debugging)
-                self.cog_indices.sort()
+            # PAPER ACCURATE: Random change with 5% probability per period
+            if random.random() < 0.05:  # 5% probability as in paper
+                # Ensure we have exactly n1 cognitive dimensions
+                if len(self.cog_indices) != n1:
+                    # Reset if wrong size
+                    self.cog_indices = list(range(n1))
 
-        elif mode == 'semi_intelligent':
-            # "If relative performance falls below a fixed percentage... threshold set at 25 percent below max"
-            # [cite_start]i.e., Fitness < 0.75 * Max_Fitness [cite: 402]
-            if population:
-                max_fit = max(a.fitness for a in population)
-                threshold = 0.75 * max_fit
+                # Replace one random cognitive dimension with a random non-cognitive dimension
+                non_cognitive = [d for d in range(full_n) if d not in self.cog_indices]
 
+                if non_cognitive:  # Safety check
+                    # Remove one cognitive dimension
+                    dim_to_remove = random.choice(self.cog_indices)
+                    self.cog_indices.remove(dim_to_remove)
+
+                    # Add one non-cognitive dimension
+                    dim_to_add = random.choice(non_cognitive)
+                    self.cog_indices.append(dim_to_add)
+
+                    # Sort for consistency
+                    self.cog_indices.sort()
+
+                    # PAPER ACCURATE: After changing representation, perform cognitive search
+                    self.search_cognitive()
+                    return True
+
+            return False
+
+        if mode == 'semi_intelligent':
+            # PAPER ACCURATE: Change when fitness < 75% of max fitness
+            if population and len(population) > 1:  # Need at least 2 agents for comparison
+                # Find max fitness in population
+                max_fitness = max(a.fitness for a in population)
+
+                # PAPER SPECIFIC: Threshold is 75% of max fitness
+                threshold = 0.75 * max_fitness
+
+                # Check if this agent's performance is below threshold
                 if self.fitness < threshold:
-                    perform_shift = True
-                    # [cite_start]"Imitates the cognition of one of the leading organizations... top third" [cite: 402]
-                    leaders = sorted(population, key=lambda x: x.fitness, reverse=True)
-                    top_third_idx = len(population) // 3
-                    if top_third_idx < 1: top_third_idx = 1
-                    target_agent = random.choice(leaders[:top_third_idx])
+                    # PAPER SPECIFIC: Imitate from top third of population
+                    sorted_pop = sorted(population, key=lambda x: x.fitness, reverse=True)
+                    top_third_index = max(1, len(sorted_pop) // 3)  # Top 1/3
+                    leaders = sorted_pop[:top_third_index]
 
-                    # Copy the mental model (indices), not the policy
-                    self.cog_indices = deepcopy(target_agent.cog_indices)
+                    if leaders:
+                        # Randomly select a leader to imitate
+                        leader = random.choice(leaders)
 
-        # [cite_start]"If a new cognitive representation is adopted... distinct set of N1 policy parameters will be identified" [cite: 407]
-        # This implies we run cognitive search immediately after shifting.
-        if perform_shift:
-            self.search_cognitive()
+                        # Ensure leader has cog_indices attribute
+                        if hasattr(leader, 'cog_indices') and leader.cog_indices:
+                            # Copy the leader's cognitive dimensions
+                            self.cog_indices = leader.cog_indices.copy()
+
+                            # PAPER ACCURATE: After changing representation, perform cognitive search
+                            self.search_cognitive()
+                            return True
+
+            return False
+
+        return False
 
 
 class RLAgent(BaseAgent):
